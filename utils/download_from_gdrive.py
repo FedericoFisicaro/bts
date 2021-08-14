@@ -20,6 +20,7 @@ def download_file_from_google_drive(id, destination):
                     f.write(chunk)
 
     URL = "https://docs.google.com/uc?export=download"
+    print("func ok URL ",URL)
 
     session = requests.Session()
 
@@ -29,6 +30,7 @@ def download_file_from_google_drive(id, destination):
     if token:
         params = { 'id' : id, 'confirm' : token }
         response = session.get(URL, params = params, stream = True)
+    print("fino a qua ok")
 
     save_response_content(response, destination)    
 
@@ -40,6 +42,7 @@ if __name__ == "__main__":
     else:
         # TAKE ID FROM SHAREABLE LINK
         file_id = sys.argv[1]
+        print("OK",file_id)
         # DESTINATION FILE ON YOUR DISK
         destination = sys.argv[2]
         download_file_from_google_drive(file_id, destination)

@@ -155,4 +155,9 @@ dmypy.json
 # Pyre type checker
 .pyre/
 
+
+pytorch/models/*
+pytorch/results/*
+
+
 # End of https://www.gitignore.io/api/c++,python

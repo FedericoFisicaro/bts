@@ -127,10 +127,10 @@ def test(params):
     print('Elapesed time: %s' % str(elapsed_time))
     print('Done.')
     
-    save_name = 'result_' + args.model_name
+    save_name = 'results/result_' + args.model_name
     
-    print('Saving result pngs..')
-    if not os.path.exists(os.path.dirname(save_name)):
+    print('Saving result pngs in : ',save_name)
+    if not os.path.exists(save_name +"/raw"):
         try:
             os.mkdir(save_name)
             os.mkdir(save_name + '/raw')
@@ -153,7 +153,7 @@ def test(params):
             filename_pred_png = save_name + '/raw/' + lines[s].split()[0].split('/')[-1].replace('.jpg', '.png')
             filename_cmap_png = save_name + '/cmap/' + lines[s].split()[0].split('/')[-1].replace('.jpg', '.png')
             filename_image_png = save_name + '/rgb/' + lines[s].split()[0].split('/')[-1]
-        else:
+        elif args.dataset == "nyu":
             scene_name = lines[s].split()[0].split('/')[0]
             filename_pred_png = save_name + '/raw/' + scene_name + '_' + lines[s].split()[0].split('/')[1].replace(
                 '.jpg', '.png')
@@ -162,10 +162,20 @@ def test(params):
             filename_gt_png = save_name + '/gt/' + scene_name + '_' + lines[s].split()[0].split('/')[1].replace(
                 '.jpg', '.png')
             filename_image_png = save_name + '/rgb/' + scene_name + '_' + lines[s].split()[0].split('/')[1]
+        elif args.dataset == "umons" :
+            scene_name = lines[s].split()[0].split('/')
+            scene_name_file = scene_name[0] + "_" + scene_name[1] + "_" + scene_name[2] + "_"
+            if scene_name[3] != "data":
+                scene_name_file = scene_name_file + scene_name[3][4:] + "_"
+            
+            filename_pred_png = save_name + '/raw/' + scene_name_file + scene_name[-1]
+            filename_cmap_png = save_name + '/cmap/' + scene_name_file + scene_name[-1]
+            filename_gt_png = save_name + '/gt/' + scene_name_file + scene_name[-1]
+            
         
         rgb_path = os.path.join(args.data_path, './' + lines[s].split()[0])
         image = cv2.imread(rgb_path)
-        if args.dataset == 'nyu':
+        if args.dataset == 'nyu' or args.dataset == 'umons' :
             gt_path = os.path.join(args.data_path, './' + lines[s].split()[1])
             gt = cv2.imread(gt_path, -1).astype(np.float32) / 1000.0  # Visualization purpose only
             gt[gt == 0] = np.amax(gt)

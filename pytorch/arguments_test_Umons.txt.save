@@ -1,0 +1,9 @@
+--encoder densenet161_bts
+--data_path ../../../UmonsIndoorDataset/dataset/
+--dataset umons
+--filenames_file ../train_test_inputs/umons_H2	_test_files_with_gt.txt
+--model_name bts_Umons_H1Corr_fromScratch-215000
+--checkpoint_path ./models/bts_Umons_H1Corr_fromScratch/model-215000-best_d1_0.98324
+--input_height 416
+--input_width 832
+--max_depth 20

@@ -142,14 +142,16 @@ eval_metrics = ['silog', 'abs_rel', 'log10', 'rms', 'sq_rel', 'log_rms', 'd1', '
 
 
 def compute_errors(gt, pred):
+    #print("GT" , gt)
+    #print("PRED", pred)
     thresh = np.maximum((gt / pred), (pred / gt))
+    #print("THRESH", thresh)
     d1 = (thresh < 1.25).mean()
     d2 = (thresh < 1.25 ** 2).mean()
     d3 = (thresh < 1.25 ** 3).mean()
 
     rms = (gt - pred) ** 2
     rms = np.sqrt(rms.mean())
-
     log_rms = (np.log(gt) - np.log(pred)) ** 2
     log_rms = np.sqrt(log_rms.mean())
 
@@ -161,7 +163,7 @@ def compute_errors(gt, pred):
 
     err = np.abs(np.log10(pred) - np.log10(gt))
     log10 = np.mean(err)
-
+    #print("D1 ", d1, "\nsilog ",silog)
     return [silog, abs_rel, log10, rms, sq_rel, log_rms, d1, d2, d3]
 
 
@@ -248,6 +250,7 @@ def set_misc(model):
 
 
 def online_eval(model, dataloader_eval, gpu, ngpus):
+    
     eval_measures = torch.zeros(10).cuda(device=gpu)
     for _, eval_sample_batched in enumerate(tqdm(dataloader_eval.data)):
         with torch.no_grad():
@@ -256,14 +259,14 @@ def online_eval(model, dataloader_eval, gpu, ngpus):
             gt_depth = eval_sample_batched['depth']
             has_valid_depth = eval_sample_batched['has_valid_depth']
             if not has_valid_depth:
-                # print('Invalid depth. continue.')
+                print('Invalid depth. continue.')
                 continue
 
             _, _, _, _, pred_depth = model(image, focal)
 
             pred_depth = pred_depth.cpu().numpy().squeeze()
             gt_depth = gt_depth.cpu().numpy().squeeze()
-
+        
         if args.do_kb_crop:
             height, width = gt_depth.shape
             top_margin = int(height - 352)
@@ -278,7 +281,7 @@ def online_eval(model, dataloader_eval, gpu, ngpus):
         pred_depth[np.isnan(pred_depth)] = args.min_depth_eval
 
         valid_mask = np.logical_and(gt_depth > args.min_depth_eval, gt_depth < args.max_depth_eval)
-
+        
         if args.garg_crop or args.eigen_crop:
             gt_height, gt_width = gt_depth.shape
             eval_mask = np.zeros(valid_mask.shape)
@@ -295,15 +298,19 @@ def online_eval(model, dataloader_eval, gpu, ngpus):
             valid_mask = np.logical_and(valid_mask, eval_mask)
 
         measures = compute_errors(gt_depth[valid_mask], pred_depth[valid_mask])
+        #if (True in np.isnan(np.array(measures))):
+        #    print("--------------------------------------------------------------------------------------------")
 
-        eval_measures[:9] += torch.tensor(measures).cuda(device=gpu)
-        eval_measures[9] += 1
+        if not (True in np.isnan(np.array(measures))):
+            eval_measures[:9] += torch.tensor(measures).cuda(device=gpu)
+            eval_measures[9] += 1
 
     if args.multiprocessing_distributed:
         group = dist.new_group([i for i in range(ngpus)])
         dist.all_reduce(tensor=eval_measures, op=dist.ReduceOp.SUM, group=group)
-
+   
     if not args.multiprocessing_distributed or gpu == 0:
+        print("IF COND OK : RETURN ")
         eval_measures_cpu = eval_measures.cpu()
         cnt = eval_measures_cpu[9].item()
         eval_measures_cpu /= cnt
@@ -446,7 +453,7 @@ def main_worker(gpu, ngpus_per_node, args):
 
             lpg8x8, lpg4x4, lpg2x2, reduc1x1, depth_est = model(image, focal)
 
-            if args.dataset == 'nyu':
+            if args.dataset == 'nyu' or args.dataset == 'umons':
                 mask = depth_gt > 0.1
             else:
                 mask = depth_gt > 1.0

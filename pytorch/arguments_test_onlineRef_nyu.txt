@@ -1,0 +1,19 @@
+--mode test
+--encoder densenet161_bts
+--data_path ../../dataset/nyu_depth_v2/official_splits/test/
+--dataset nyu
+--filenames_file ../train_test_inputs/nyudepthv2_test_files_with_gt.txt
+--model_name bts_nyu_onlineRef
+--checkpoint_path ./models/bts_nyu/model-90000-best_rms_0.39447
+--input_height 480
+--input_width 640
+--max_depth 10
+--gt_path ../../dataset/nyu_depth_v2/official_splits/test/
+--batch_size 1
+--num_epochs 1
+--learning_rate 1e-4
+--weight_decay 1e-2
+--adam_eps 1e-3
+--num_threads 1
+--log_directory ./models/
+--do_online_eval

@@ -18,6 +18,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as torch_nn_func
 import math
+import numpy as np
 
 from collections import namedtuple
 
@@ -45,7 +46,18 @@ class silog_loss(nn.Module):
 
     def forward(self, depth_est, depth_gt, mask):
         d = torch.log(depth_est[mask]) - torch.log(depth_gt[mask])
-        return torch.sqrt((d ** 2).mean() - self.variance_focus * (d.mean() ** 2)) * 10.0
+
+        losss = torch.sqrt((d ** 2).mean() - self.variance_focus * (d.mean() ** 2)) * 10.0
+        if np.isnan(losss.cpu().item()):
+            print("NAN!")
+            print("------ LOG PREDICT : ", torch.log(depth_est[mask]))
+            print("PREDICT : ", depth_est[mask])
+            print("------ LOG GT : ", torch.log(depth_gt[mask]))            
+            print("GT : ", depth_gt[mask])
+            print("------- D: ", d)
+            # print("------ d2 mean : ", (d ** 2).mean())
+            # print("------ variance * d.mean2 : ", self.variance_focus * (d.mean() ** 2))
+        return losss
 
 
 class atrous_conv(nn.Sequential):

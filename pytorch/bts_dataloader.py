@@ -92,6 +92,7 @@ class DataLoadPreprocess(Dataset):
         self.is_for_online_eval = is_for_online_eval
     
     def __getitem__(self, idx):
+        #print("DATAL, ",self.filenames[idx])
         sample_path = self.filenames[idx]
         focal = float(sample_path.split()[2])
 
@@ -105,6 +106,7 @@ class DataLoadPreprocess(Dataset):
     
             image = Image.open(image_path)
             depth_gt = Image.open(depth_path)
+            
             
             if self.args.do_kb_crop is True:
                 height = image.height
@@ -128,7 +130,7 @@ class DataLoadPreprocess(Dataset):
             depth_gt = np.asarray(depth_gt, dtype=np.float32)
             depth_gt = np.expand_dims(depth_gt, axis=2)
 
-            if self.args.dataset == 'nyu':
+            if self.args.dataset == 'nyu' or self.args.dataset == 'umons':
                 depth_gt = depth_gt / 1000.0
             else:
                 depth_gt = depth_gt / 256.0
@@ -144,6 +146,7 @@ class DataLoadPreprocess(Dataset):
                 data_path = self.args.data_path
 
             image_path = os.path.join(data_path, "./" + sample_path.split()[0])
+            # print(image_path)
             image = np.asarray(Image.open(image_path), dtype=np.float32) / 255.0
 
             if self.mode == 'online_eval':
@@ -160,7 +163,7 @@ class DataLoadPreprocess(Dataset):
                 if has_valid_depth:
                     depth_gt = np.asarray(depth_gt, dtype=np.float32)
                     depth_gt = np.expand_dims(depth_gt, axis=2)
-                    if self.args.dataset == 'nyu':
+                    if self.args.dataset == 'nyu' or self.args.dataset == 'umons':
                         depth_gt = depth_gt / 1000.0
                     else:
                         depth_gt = depth_gt / 256.0

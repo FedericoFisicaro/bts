@@ -96,7 +96,7 @@ def test():
             missing_ids.add(i)
             continue
 
-        if args.dataset == 'nyu':
+        if args.dataset == 'nyu' or args.dataset == 'umons' :
             pred_depth = pred_depth.astype(np.float32) / 1000.0
         else:
             pred_depth = pred_depth.astype(np.float32) / 256.0
@@ -127,6 +127,32 @@ def test():
             filename = file_dir.split('_')[-1]
             directory = file_dir.replace('_rgb_'+file_dir.split('_')[-1], '')
             gt_depth_path = os.path.join(args.gt_path, directory, 'sync_depth_' + filename + '.png')
+            depth = cv2.imread(gt_depth_path, -1)
+            if depth is None:
+                print('Missing: %s ' % gt_depth_path)
+                missing_ids.add(t_id)
+                continue
+
+            depth = depth.astype(np.float32) / 1000.0
+            gt_depths.append(depth)
+    
+    elif args.dataset == 'umons':
+        for t_id in range(num_test_samples):
+            file_dir = pred_filenames[t_id].split('.')[0]
+            file_dir_split = file_dir.split('_')
+            filename = file_dir_split[-1]
+            directory = os.path.join(file_dir_split[0],file_dir_split[1],file_dir_split[2])
+
+            if len(file_dir_split) < 5:
+                directory = os.path.join(directory,"data")
+            else:
+                dataSplit = file_dir_split[3]
+                for i in file_dir_split[4:-1]:
+                    dataSplit = dataSplit + "_" + i 
+                dataSplit = "data" + dataSplit
+                directory = os.path.join(directory,dataSplit)
+
+            gt_depth_path = os.path.join(args.gt_path, directory, "left_depth" + filename[-6:] + '.png')            
             depth = cv2.imread(gt_depth_path, -1)
             if depth is None:
                 print('Missing: %s ' % gt_depth_path)
