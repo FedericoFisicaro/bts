@@ -1,32 +1,33 @@
 --mode train
---model_name bts_Umons_FTfromKitti
+--model_name bts_Umons_Ref_Kitti-DevRoomH1
 --encoder densenet161_bts
---dataset perso
+--dataset umons
 --data_path /home/FisicaroF/UmonsIndoorDataset/dataset
 --gt_path /home/FisicaroF/UmonsIndoorDataset/dataset
---filenames_file ../train_test_inputs/personal_train_files_with_gt.txt
---batch_size 4
---num_epochs 50
+--filenames_file ../train_test_inputs/umons_train_REF.txt
+--batch_size 1
+--num_epochs 1
 --learning_rate 1e-4
 --weight_decay 1e-2
 --adam_eps 1e-3
 --num_threads 1
 --input_height 416
 --input_width 832
---max_depth 3
+--max_depth 20
 --do_random_rotate
 --degree 2.5
 --log_directory ./models/
 --multiprocessing_distributed
 --dist_url tcp://127.0.0.1:2345
---checkpoint_path ./models/bts_Umons_FTfromKitti/model-519000-best_silog_7.22917
+--checkpoint_path ./models/fromScratch/bts_kitti_fromScratch/model-123500-best_d1_0.96113 
+--retrain
 
---log_freq 500
+--log_freq 25
 --do_online_eval
---eval_freq 1000
+--eval_freq 25
 --data_path_eval /home/FisicaroF/UmonsIndoorDataset/dataset
 --gt_path_eval /home/FisicaroF/UmonsIndoorDataset/dataset
---filenames_file_eval ../train_test_inputs/personal_test_files_with_gt.txt
+--filenames_file_eval ../train_test_inputs/umons_train_REF.txt
 --min_depth_eval 2e-3
---max_depth_eval 3
+--max_depth_eval 20
 --eval_summary_directory ./models/eval/

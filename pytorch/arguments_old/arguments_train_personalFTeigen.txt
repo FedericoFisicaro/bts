@@ -1,10 +1,10 @@
 --mode train
---model_name bts_Umons_allH_Corr_fromScratch
+--model_name bts_Umons_FTfromNYU
 --encoder densenet161_bts
---dataset umons
+--dataset perso
 --data_path /home/FisicaroF/UmonsIndoorDataset/dataset
 --gt_path /home/FisicaroF/UmonsIndoorDataset/dataset
---filenames_file ../train_test_inputs/umons_allH_train_files_with_gt.txt
+--filenames_file ../train_test_inputs/personal_train_files_with_gt.txt
 --batch_size 4
 --num_epochs 50
 --learning_rate 1e-4
@@ -13,19 +13,21 @@
 --num_threads 1
 --input_height 416
 --input_width 832
---max_depth 20
+--max_depth 3
 --do_random_rotate
 --degree 2.5
 --log_directory ./models/
 --multiprocessing_distributed
 --dist_url tcp://127.0.0.1:2345
+--checkpoint_path ./models/bts_Umons_FTfromKitti/model-519000-best_silog_7.22917
+--retrain
 
 --log_freq 500
 --do_online_eval
 --eval_freq 1000
 --data_path_eval /home/FisicaroF/UmonsIndoorDataset/dataset
 --gt_path_eval /home/FisicaroF/UmonsIndoorDataset/dataset
---filenames_file_eval ../train_test_inputs/umons_allH_test_files_with_gt.txt
+--filenames_file_eval ../train_test_inputs/personal_test_files_with_gt.txt
 --min_depth_eval 2e-3
---max_depth_eval 20
+--max_depth_eval 3
 --eval_summary_directory ./models/eval/

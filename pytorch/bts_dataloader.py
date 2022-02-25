@@ -41,22 +41,24 @@ def preprocessing_transforms(mode):
 
 
 class BtsDataLoader(object):
-    def __init__(self, args, mode):
+    def __init__(self, args, mode, xx = 0):
         if mode == 'train':
             self.training_samples = DataLoadPreprocess(args, mode, transform=preprocessing_transforms(mode))
             if args.distributed:
                 self.train_sampler = torch.utils.data.distributed.DistributedSampler(self.training_samples)
             else:
                 self.train_sampler = None
-    
+
             self.data = DataLoader(self.training_samples, args.batch_size,
                                    shuffle=(self.train_sampler is None),
                                    num_workers=args.num_threads,
                                    pin_memory=True,
                                    sampler=self.train_sampler)
 
-        elif mode == 'online_eval':
-            self.testing_samples = DataLoadPreprocess(args, mode, transform=preprocessing_transforms(mode))
+        elif mode == 'online_eval' or mode == 'online_ref':
+            print("OK")
+            print(xx)
+            self.testing_samples = DataLoadPreprocess(args, mode, transform=preprocessing_transforms(mode),xx = xx)
             if args.distributed:
                 # self.eval_sampler = torch.utils.data.distributed.DistributedSampler(self.testing_samples, shuffle=False)
                 self.eval_sampler = DistributedSamplerNoEvenlyDivisible(self.testing_samples, shuffle=False)
@@ -77,11 +79,16 @@ class BtsDataLoader(object):
             
             
 class DataLoadPreprocess(Dataset):
-    def __init__(self, args, mode, transform=None, is_for_online_eval=False):
+    def __init__(self, args, mode, transform=None, is_for_online_eval=False, xx =0):
         self.args = args
         if mode == 'online_eval':
             with open(args.filenames_file_eval, 'r') as f:
                 self.filenames = f.readlines()
+        elif mode == 'online_ref':
+            with open(args.filenames_file_eval, 'r') as f:
+                self.filenames = f.readlines()[xx*25:(xx+1)*25]
+                # print(self.filenames)
+
         else:
             with open(args.filenames_file, 'r') as f:
                 self.filenames = f.readlines()
@@ -140,7 +147,7 @@ class DataLoadPreprocess(Dataset):
             sample = {'image': image, 'depth': depth_gt, 'focal': focal}
         
         else:
-            if self.mode == 'online_eval':
+            if self.mode == 'online_eval' or self.mode == 'online_ref':
                 data_path = self.args.data_path_eval
             else:
                 data_path = self.args.data_path
@@ -149,7 +156,7 @@ class DataLoadPreprocess(Dataset):
             # print(image_path)
             image = np.asarray(Image.open(image_path), dtype=np.float32) / 255.0
 
-            if self.mode == 'online_eval':
+            if self.mode == 'online_eval' or self.mode == 'online_ref':
                 gt_path = self.args.gt_path_eval
                 depth_path = os.path.join(gt_path, "./" + sample_path.split()[1])
                 has_valid_depth = False
@@ -174,11 +181,11 @@ class DataLoadPreprocess(Dataset):
                 top_margin = int(height - 352)
                 left_margin = int((width - 1216) / 2)
                 image = image[top_margin:top_margin + 352, left_margin:left_margin + 1216, :]
-                if self.mode == 'online_eval' and has_valid_depth:
+                if (self.mode == 'online_eval' or self.mode == 'online_ref') and has_valid_depth:
                     depth_gt = depth_gt[top_margin:top_margin + 352, left_margin:left_margin + 1216, :]
             
-            if self.mode == 'online_eval':
-                sample = {'image': image, 'depth': depth_gt, 'focal': focal, 'has_valid_depth': has_valid_depth}
+            if self.mode == 'online_eval' or self.mode == 'online_ref':
+                sample = {'image': image, 'depth': depth_gt, 'focal': focal, 'has_valid_depth': has_valid_depth, 'test': sample_path}
             else:
                 sample = {'image': image, 'focal': focal}
         
@@ -259,8 +266,9 @@ class ToTensor(object):
             depth = self.to_tensor(depth)
             return {'image': image, 'depth': depth, 'focal': focal}
         else:
+            test = sample['test']
             has_valid_depth = sample['has_valid_depth']
-            return {'image': image, 'depth': depth, 'focal': focal, 'has_valid_depth': has_valid_depth}
+            return {'image': image, 'depth': depth, 'focal': focal, 'has_valid_depth': has_valid_depth, 'test': test}
     
     def to_tensor(self, pic):
         if not (_is_pil_image(pic) or _is_numpy_image(pic)):

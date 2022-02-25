@@ -19,6 +19,7 @@ import argparse
 import datetime
 import sys
 import os
+import cv2
 
 import torch
 import torch.nn as nn
@@ -37,7 +38,7 @@ from tqdm import tqdm
 
 from bts import BtsModel
 from bts_dataloader import *
-from bts import *
+
 
 def convert_arg_line_to_args(arg_line):
     for arg in arg_line.split():
@@ -77,7 +78,7 @@ parser.add_argument('--weight_decay',              type=float, help='weight deca
 parser.add_argument('--bts_size',                  type=int,   help='initial num_filters in bts', default=512)
 parser.add_argument('--retrain',                               help='if used with checkpoint_path, will restart training from step zero', action='store_true')
 parser.add_argument('--adam_eps',                  type=float, help='epsilon in Adam optimizer', default=1e-6)
-parser.add_argument('--batch_size',                type=int,   help='batch size', default=1)
+parser.add_argument('--batch_size',                type=int,   help='batch size', default=4)
 parser.add_argument('--num_epochs',                type=int,   help='number of epochs', default=1)
 parser.add_argument('--learning_rate',             type=float, help='initial learning rate', default=1e-4)
 parser.add_argument('--end_learning_rate',         type=float, help='end learning rate', default=-1)
@@ -109,9 +110,12 @@ parser.add_argument('--min_depth_eval',            type=float, help='minimum dep
 parser.add_argument('--max_depth_eval',            type=float, help='maximum depth for evaluation', default=80)
 parser.add_argument('--eigen_crop',                            help='if set, crops according to Eigen NIPS14', action='store_true')
 parser.add_argument('--garg_crop',                             help='if set, crops according to Garg  ECCV16', action='store_true')
-parser.add_argument('--eval_freq',                 type=int,   help='Online evaluation frequency in global steps', default=500)
+parser.add_argument('--eval_freq',                 type=int,   help='Online evaluation frequency in global steps', default=25)
 parser.add_argument('--eval_summary_directory',    type=str,   help='output directory for eval summary,'
                                                                     'if empty outputs to checkpoint folder', default='')
+
+
+parser.add_argument('--save_pred',                             help='save predictions', action='store_true')                                                                    
 
 if sys.argv.__len__() == 2:
     arg_filename_with_prefix = '@' + sys.argv[1]
@@ -142,14 +146,16 @@ eval_metrics = ['silog', 'abs_rel', 'log10', 'rms', 'sq_rel', 'log_rms', 'd1', '
 
 
 def compute_errors(gt, pred):
+    #print("GT" , gt)
+    #print("PRED", pred)
     thresh = np.maximum((gt / pred), (pred / gt))
+    #print("THRESH", thresh)
     d1 = (thresh < 1.25).mean()
     d2 = (thresh < 1.25 ** 2).mean()
     d3 = (thresh < 1.25 ** 3).mean()
 
     rms = (gt - pred) ** 2
     rms = np.sqrt(rms.mean())
-
     log_rms = (np.log(gt) - np.log(pred)) ** 2
     log_rms = np.sqrt(log_rms.mean())
 
@@ -161,7 +167,7 @@ def compute_errors(gt, pred):
 
     err = np.abs(np.log10(pred) - np.log10(gt))
     log10 = np.mean(err)
-
+    #print("D1 ", d1, "\nsilog ",silog)
     return [silog, abs_rel, log10, rms, sq_rel, log_rms, d1, d2, d3]
 
 
@@ -247,31 +253,47 @@ def set_misc(model):
                 parameters.requires_grad = False
 
 
-def eval(pred_depths, step):
-    num_samples = get_num_lines(args.filenames_file)
-    pred_depths_valid = []
+def online_eval(model, dataloader_eval, gpu, ngpus,xx):
     
-    for t_id in range(num_samples):
-        if t_id in missing_ids:
-            continue
+    eval_measures = torch.zeros(10).cuda(device=gpu)
+    tess = 0
+
+    # print("Test entre ", str(xx * args.eval_freq), " et ", str( (xx+1) * args.eval_freq))
+    
+    if not os.path.exists('results/result_' + args.model_name + "/" + str(xx)):
+        if not os.path.exists('results/result_' + args.model_name):
+            os.mkdir('results/result_' + args.model_name)
+        os.mkdir('results/result_' + args.model_name + "/" + str(xx))
+
+
+    for _, eval_sample_batched in enumerate(tqdm(dataloader_eval.data)):
+        tess = tess + 1
+        # print("TESS= ",tess)
+        # if tess < xx * args.eval_freq or tess > (xx+1) * args.eval_freq :
+            # print("skip")
+            # continue
+        with torch.no_grad():
+
+            image = torch.autograd.Variable(eval_sample_batched['image'].cuda(gpu, non_blocking=True))
+            focal = torch.autograd.Variable(eval_sample_batched['focal'].cuda(gpu, non_blocking=True))
+            gt_depth = eval_sample_batched['depth']
+            has_valid_depth = eval_sample_batched['has_valid_depth']
+            if not has_valid_depth:
+                print('Invalid depth. continue.')
+                continue
+
+            _, _, _, _, pred_depth = model(image, focal)
+
+            pred_depth = pred_depth.cpu().numpy().squeeze()
+            gt_depth = gt_depth.cpu().numpy().squeeze()
         
-        pred_depths_valid.append(pred_depths[t_id])
-    
-    num_samples = num_samples - len(missing_ids)
-    
-    silog = np.zeros(num_samples, np.float32)
-    log10 = np.zeros(num_samples, np.float32)
-    rms = np.zeros(num_samples, np.float32)
-    log_rms = np.zeros(num_samples, np.float32)
-    abs_rel = np.zeros(num_samples, np.float32)
-    sq_rel = np.zeros(num_samples, np.float32)
-    d1 = np.zeros(num_samples, np.float32)
-    d2 = np.zeros(num_samples, np.float32)
-    d3 = np.zeros(num_samples, np.float32)
-    
-    for i in range(num_samples):
-        gt_depth = gt_depths[i]
-        pred_depth = pred_depths_valid[i]
+        if args.save_pred :
+            if args.dataset == 'kitti' or args.dataset == 'kitti_benchmark':
+                pred_depth_scaled = pred_depth * 256.0
+            else:
+                pred_depth_scaled = pred_depth * 1000.0
+            pred_depth_scaled = pred_depth_scaled.astype(np.uint16)
+            cv2.imwrite('results/result_' + args.model_name + "/" + str(xx) + "/" + str(tess) + ".png", pred_depth_scaled, [cv2.IMWRITE_PNG_COMPRESSION, 0])
         
         if args.do_kb_crop:
             height, width = gt_depth.shape
@@ -280,39 +302,65 @@ def eval(pred_depths, step):
             pred_depth_uncropped = np.zeros((height, width), dtype=np.float32)
             pred_depth_uncropped[top_margin:top_margin + 352, left_margin:left_margin + 1216] = pred_depth
             pred_depth = pred_depth_uncropped
-        
+
         pred_depth[pred_depth < args.min_depth_eval] = args.min_depth_eval
         pred_depth[pred_depth > args.max_depth_eval] = args.max_depth_eval
         pred_depth[np.isinf(pred_depth)] = args.max_depth_eval
         pred_depth[np.isnan(pred_depth)] = args.min_depth_eval
-        
+
         valid_mask = np.logical_and(gt_depth > args.min_depth_eval, gt_depth < args.max_depth_eval)
         
         if args.garg_crop or args.eigen_crop:
             gt_height, gt_width = gt_depth.shape
             eval_mask = np.zeros(valid_mask.shape)
-            
+
             if args.garg_crop:
                 eval_mask[int(0.40810811 * gt_height):int(0.99189189 * gt_height), int(0.03594771 * gt_width):int(0.96405229 * gt_width)] = 1
-            
+
             elif args.eigen_crop:
                 if args.dataset == 'kitti':
                     eval_mask[int(0.3324324 * gt_height):int(0.91351351 * gt_height), int(0.0359477 * gt_width):int(0.96405229 * gt_width)] = 1
                 else:
                     eval_mask[45:471, 41:601] = 1
-            
+
             valid_mask = np.logical_and(valid_mask, eval_mask)
+
+        measures = compute_errors(gt_depth[valid_mask], pred_depth[valid_mask])
+        #if (True in np.isnan(np.array(measures))):
+        #    print("--------------------------------------------------------------------------------------------")
+
+        if not (True in np.isnan(np.array(measures))):
+            eval_measures[:9] += torch.tensor(measures).cuda(device=gpu)
+            eval_measures[9] += 1
+
+    if args.multiprocessing_distributed:
+        group = dist.new_group([i for i in range(ngpus)])
+        dist.all_reduce(tensor=eval_measures, op=dist.ReduceOp.SUM, group=group)
+   
+    if not args.multiprocessing_distributed or gpu == 0:
+        eval_measures_cpu = eval_measures.cpu()
+        cnt = eval_measures_cpu[9].item()
+        eval_measures_cpu /= cnt
+        print('Computing errors for {} eval samples'.format(int(cnt)))
+        print("{:>7}, {:>7}, {:>7}, {:>7}, {:>7}, {:>7}, {:>7}, {:>7}, {:>7}".format('silog', 'abs_rel', 'log10', 'rms',
+                                                                                     'sq_rel', 'log_rms', 'd1', 'd2',
+                                                                                     'd3'))
+        for i in range(8):
+            print('{:7.3f}, '.format(eval_measures_cpu[i]), end='')
+        print('{:7.3f}'.format(eval_measures_cpu[8]))
+
+        with open('results/result_' + args.model_name + "/" + str(xx) + "/metrics.txt","w") as f:
+            f.write("{:>7}, {:>7}, {:>7}, {:>7}, {:>7}, {:>7}, {:>7}, {:>7}, {:>7}\n".format('silog', 'abs_rel', 'log10', 'rms',
+                                                                                     'sq_rel', 'log_rms', 'd1', 'd2',
+                                                                                     'd3'))
+            for i in range(8):
+                f.write('{:7.3f}, '.format(eval_measures_cpu[i]))
+            f.write('{:7.3f}'.format(eval_measures_cpu[8]))
         
-        silog[i], log10[i], abs_rel[i], sq_rel[i], rms[i], log_rms[i], d1[i], d2[i], d3[i] = compute_errors(
-            gt_depth[valid_mask], pred_depth[valid_mask])
-    
-    print("{:>7}, {:>7}, {:>7}, {:>7}, {:>7}, {:>7}, {:>7}, {:>7}, {:>7}".format('silog', 'abs_rel', 'log10', 'rms',
-                                                                                 'sq_rel', 'log_rms', 'd1', 'd2', 'd3'))
-    print("{:7.4f}, {:7.4f}, {:7.3f}, {:7.3f}, {:7.3f}, {:7.3f}, {:7.3f}, {:7.3f}, {:7.3f}".format(
-        silog.mean(), abs_rel.mean(), log10.mean(), rms.mean(), sq_rel.mean(), log_rms.mean(), d1.mean(), d2.mean(),
-        d3.mean()))
-    
-    return silog, log10, abs_rel, sq_rel, rms, log_rms, d1, d2, d3
+        
+        return eval_measures_cpu
+
+    return None
 
 
 def main_worker(gpu, ngpus_per_node, args):
@@ -398,11 +446,18 @@ def main_worker(gpu, ngpus_per_node, args):
     cudnn.benchmark = True
 
     dataloader = BtsDataLoader(args, 'train')
+    
 
     # Logging
     if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
         writer = SummaryWriter(args.log_directory + '/' + args.model_name + '/summaries', flush_secs=30)
-        
+        if args.do_online_eval:
+            if args.eval_summary_directory != '':
+                eval_summary_path = os.path.join(args.eval_summary_directory, args.model_name)
+            else:
+                eval_summary_path = os.path.join(args.log_directory, 'eval')
+            eval_summary_writer = SummaryWriter(eval_summary_path, flush_secs=30)
+
     silog_criterion = silog_loss(variance_focus=args.variance_focus)
 
     start_time = time.time()
@@ -420,111 +475,167 @@ def main_worker(gpu, ngpus_per_node, args):
     steps_per_epoch = len(dataloader.data)
     num_total_steps = args.num_epochs * steps_per_epoch
     epoch = global_step // steps_per_epoch
+    xxMax = round(steps_per_epoch/25)
 
-    pred_depths = []
+    while epoch < args.num_epochs:
+        if args.distributed:
+            dataloader.train_sampler.set_epoch(epoch)
 
-    if args.distributed:
-        dataloader.train_sampler.set_epoch(epoch)
+        for step, sample_batched in enumerate(dataloader.data):
+            optimizer.zero_grad()
+            before_op_time = time.time()
 
-    for step, sample_batched in enumerate(dataloader.data):
-        optimizer.zero_grad()
-        before_op_time = time.time()
+            image = torch.autograd.Variable(sample_batched['image'].cuda(args.gpu, non_blocking=True))
+            focal = torch.autograd.Variable(sample_batched['focal'].cuda(args.gpu, non_blocking=True))
+            depth_gt = torch.autograd.Variable(sample_batched['depth'].cuda(args.gpu, non_blocking=True))
 
-        image = torch.autograd.Variable(sample_batched['image'].cuda(args.gpu, non_blocking=True))
-        focal = torch.autograd.Variable(sample_batched['focal'].cuda(args.gpu, non_blocking=True))
-        depth_gt = torch.autograd.Variable(sample_batched['depth'].cuda(args.gpu, non_blocking=True))
+            lpg8x8, lpg4x4, lpg2x2, reduc1x1, depth_est = model(image, focal)
 
-        lpg8x8, lpg4x4, lpg2x2, reduc1x1, depth_est = model(image, focal)
-
-        if args.dataset == 'nyu':
-            mask = depth_gt > 0.1
-        else:
-            mask = depth_gt > 1.0
-
-        loss = silog_criterion.forward(depth_est, depth_gt, mask.to(torch.bool))
-        loss.backward()
-        for param_group in optimizer.param_groups:
-            current_lr = (args.learning_rate - end_learning_rate) * (1 - global_step / num_total_steps) ** 0.9 + end_learning_rate
-            param_group['lr'] = current_lr
-
-        optimizer.step()
-
-        if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
-            print('[epoch][s/s_per_e/gs]: [{}][{}/{}/{}], lr: {:.12f}, loss: {:.12f}'.format(epoch, step, steps_per_epoch, global_step, current_lr, loss))
-            if np.isnan(loss.cpu().item()):
-                print('NaN in loss occurred. Aborting training.')
-                return -1
-        
-
-        model.eval()
-        model.cuda()
-
-        image = Variable(sample_batched['image'].cuda())    
-        focal = Variable(sample_batched['focal'].cuda())
-        
-        lpg8x8, lpg4x4, lpg2x2, reduc1x1, depth_est = model(image, focal)
-        pred_depths.append(depth_est.cpu().numpy().squeeze())
-
-
-        model_just_loaded = False
-        global_step += 1
-
-        elapsed_time = time.time() - start_time
-        print('Elapesed time: %s' % str(elapsed_time))
-        print('Done.')
-
-    if len(gt_depths) == 0:
-        for t_id in range(num_test_samples):
-            gt_depth_path = os.path.join(args.gt_path, lines[t_id].split()[1])
-            depth = cv2.imread(gt_depth_path, -1)
-            if depth is None:
-                print('Missing: %s ' % gt_depth_path)
-                missing_ids.add(t_id)
-                continue
-            
-            if args.dataset == 'nyu':
-                depth = depth.astype(np.float32) / 1000.0
+            if args.dataset == 'nyu' or args.dataset == 'umons':
+                mask = depth_gt > 0.1
             else:
-                depth = depth.astype(np.float32) / 256.0
-            
-            gt_depths.append(depth)
+                mask = depth_gt > 1.0
 
-    print('Computing errors')
-    silog, log10, abs_rel, sq_rel, rms, log_rms, d1, d2, d3 = eval(pred_depths, int(step))
-    
-    if write_summary:
-        summary_writer.add_scalar('silog', silog.mean(), int(step))
-        summary_writer.add_scalar('abs_rel', abs_rel.mean(), int(step))
-        summary_writer.add_scalar('log10', log10.mean(), int(step))
-        summary_writer.add_scalar('sq_rel', sq_rel.mean(), int(step))
-        summary_writer.add_scalar('rms', rms.mean(), int(step))
-        summary_writer.add_scalar('log_rms', log_rms.mean(), int(step))
-        summary_writer.add_scalar('d1', d1.mean(), int(step))
-        summary_writer.add_scalar('d2', d2.mean(), int(step))
-        summary_writer.add_scalar('d3', d3.mean(), int(step))
-        summary_writer.flush()
-        
-        with open(os.path.dirname(args.checkpoint_path) + '/evaluated_checkpoints', 'a') as file:
-            file.write(step + '\n')
-    
-    print('Evaluation done')
+            loss = silog_criterion.forward(depth_est, depth_gt, mask.to(torch.bool))
+            loss.backward()
+            for param_group in optimizer.param_groups:
+                current_lr = (args.learning_rate - end_learning_rate) * (1 - global_step / num_total_steps) ** 0.9 + end_learning_rate
+                param_group['lr'] = current_lr
+
+            optimizer.step()
+
+            if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
+                print('[epoch][s/s_per_e/gs]: [{}][{}/{}/{}], lr: {:.12f}, loss: {:.12f}'.format(epoch, step, steps_per_epoch, global_step, current_lr, loss))
+                if np.isnan(loss.cpu().item()):
+                    print('NaN in loss occurred. Aborting training.')
+                    return -1
+
+            duration += time.time() - before_op_time
+            if global_step and global_step % args.log_freq == 0 and not model_just_loaded:
+                var_sum = [var.sum() for var in model.parameters() if var.requires_grad]
+                var_cnt = len(var_sum)
+                var_sum = np.sum(var_sum)
+                examples_per_sec = args.batch_size / duration * args.log_freq
+                duration = 0
+                time_sofar = (time.time() - start_time) / 3600
+                training_time_left = (num_total_steps / global_step - 1.0) * time_sofar
+                if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
+                    print("{}".format(args.model_name))
+                print_string = 'GPU: {} | examples/s: {:4.2f} | loss: {:.5f} | var sum: {:.3f} avg: {:.3f} | time elapsed: {:.2f}h | time left: {:.2f}h'
+                print(print_string.format(args.gpu, examples_per_sec, loss, var_sum.item(), var_sum.item()/var_cnt, time_sofar, training_time_left))
+
+                if not args.multiprocessing_distributed or (args.multiprocessing_distributed
+                                                            and args.rank % ngpus_per_node == 0):
+                    writer.add_scalar('silog_loss', loss, global_step)
+                    writer.add_scalar('learning_rate', current_lr, global_step)
+                    writer.add_scalar('var average', var_sum.item()/var_cnt, global_step)
+                    depth_gt = torch.where(depth_gt < 1e-3, depth_gt * 0 + 1e3, depth_gt)
+                    for i in range(num_log_images):
+                        writer.add_image('depth_gt/image/{}'.format(i), normalize_result(1/depth_gt[i, :, :, :].data), global_step)
+                        writer.add_image('depth_est/image/{}'.format(i), normalize_result(1/depth_est[i, :, :, :].data), global_step)
+                        writer.add_image('reduc1x1/image/{}'.format(i), normalize_result(1/reduc1x1[i, :, :, :].data), global_step)
+                        writer.add_image('lpg2x2/image/{}'.format(i), normalize_result(1/lpg2x2[i, :, :, :].data), global_step)
+                        writer.add_image('lpg4x4/image/{}'.format(i), normalize_result(1/lpg4x4[i, :, :, :].data), global_step)
+                        writer.add_image('lpg8x8/image/{}'.format(i), normalize_result(1/lpg8x8[i, :, :, :].data), global_step)
+                        writer.add_image('image/image/{}'.format(i), inv_normalize(image[i, :, :, :]).data, global_step)
+                    writer.flush()
+                
+
+            if args.do_online_eval and global_step and global_step % args.eval_freq == 0 and not model_just_loaded:
+                
+                xx = int(global_step / 25)
+                
+                if not args.multiprocessing_distributed or (args.multiprocessing_distributed and args.rank % ngpus_per_node == 0):
+                    checkpoint = {'global_step': global_step,
+                                  'model': model.state_dict(),
+                                  'optimizer': optimizer.state_dict()}
+                    torch.save(checkpoint, args.log_directory + '/' + args.model_name + '/model-{}'.format((xx-1)*25) + "-" + '{}'.format(xx*25))
+                    
+                  
+                if xx >= xxMax :
+                    break    
+                dataloader_eval = BtsDataLoader(args, 'online_ref',xx=xx)
+
+                time.sleep(0.1)
+                model.eval()
+                eval_measures = online_eval(model, dataloader_eval, gpu, ngpus_per_node,xx)
+                # if eval_measures is not None:
+                #     for i in range(9):
+                #         eval_summary_writer.add_scalar(eval_metrics[i], eval_measures[i].cpu(), int(global_step))
+                #         measure = eval_measures[i]
+                #         is_best = False
+                #         if i < 6 and measure < best_eval_measures_lower_better[i]:
+                #             old_best = best_eval_measures_lower_better[i].item()
+                #             best_eval_measures_lower_better[i] = measure.item()
+                #             is_best = True
+                #         elif i >= 6 and measure > best_eval_measures_higher_better[i-6]:
+                #             old_best = best_eval_measures_higher_better[i-6].item()
+                #             best_eval_measures_higher_better[i-6] = measure.item()
+                #             is_best = True
+                #         if is_best:
+                #             old_best_step = best_eval_steps[i]
+                #             old_best_name = '/model-{}-best_{}_{:.5f}'.format(old_best_step, eval_metrics[i], old_best)
+                #             model_path = args.log_directory + '/' + args.model_name + old_best_name
+                #             if os.path.exists(model_path):
+                #                 command = 'rm {}'.format(model_path)
+                #                 os.system(command)
+                #             best_eval_steps[i] = global_step
+                #             model_save_name = '/model-{}-best_{}_{:.5f}'.format(global_step, eval_metrics[i], measure)
+                #             print('New best for {}. Saving model: {}'.format(eval_metrics[i], model_save_name))
+                #             checkpoint = {'global_step': global_step,
+                #                           'model': model.state_dict(),
+                #                           'optimizer': optimizer.state_dict(),
+                #                           'best_eval_measures_higher_better': best_eval_measures_higher_better,
+                #                           'best_eval_measures_lower_better': best_eval_measures_lower_better,
+                #                           'best_eval_steps': best_eval_steps
+                #                           }
+                #             torch.save(checkpoint, args.log_directory + '/' + args.model_name + model_save_name)
+                #     eval_summary_writer.flush()
+                model.train()
+                block_print()
+                set_misc(model)
+                enable_print()
+
+            model_just_loaded = False
+            global_step += 1
+
+        epoch += 1
 
 
 def main():
+    if args.mode != 'train':
+        print('bts_main.py is only for training. Use bts_test.py instead.')
+        return -1
 
-    if args.checkpoint_path == '':
-        raise ValueError('Online refinement have to be performed on an existing model')
+    if args.batch_size != 1:
+        print('Batch size must be 1 if online refinment')
+        return -1
 
     model_filename = args.model_name + '.py'
     command = 'mkdir ' + args.log_directory + '/' + args.model_name
     os.system(command)
-    loaded_model_dir = os.path.dirname(args.checkpoint_path)
-    loaded_model_name = os.path.basename(loaded_model_dir)
-    loaded_model_filename = loaded_model_name + '.py'
 
-    model_out_path = args.log_directory + '/' + args.model_name + '/' + model_filename
-    command = 'cp ' + loaded_model_dir + '/' + loaded_model_filename + ' ' + model_out_path
+    args_out_path = args.log_directory + '/' + args.model_name + '/' + sys.argv[1]
+    command = 'cp ' + sys.argv[1] + ' ' + args_out_path
     os.system(command)
+
+    if args.checkpoint_path == '':
+        model_out_path = args.log_directory + '/' + args.model_name + '/' + model_filename
+        command = 'cp bts.py ' + model_out_path
+        os.system(command)
+        aux_out_path = args.log_directory + '/' + args.model_name + '/.'
+        command = 'cp bts_main.py ' + aux_out_path
+        os.system(command)
+        command = 'cp bts_dataloader.py ' + aux_out_path
+        os.system(command)
+    else:
+        loaded_model_dir = os.path.dirname(args.checkpoint_path)
+        loaded_model_name = os.path.basename(loaded_model_dir)
+        loaded_model_filename = loaded_model_name + '.py'
+
+        model_out_path = args.log_directory + '/' + args.model_name + '/' + model_filename
+        command = 'cp ' + loaded_model_dir + '/' + loaded_model_filename + ' ' + model_out_path
+        os.system(command)
 
     torch.cuda.empty_cache()
     args.distributed = args.world_size > 1 or args.multiprocessing_distributed
